@@ -1,9 +1,7 @@
 # Code companion — backend CI optimisation post
 
 Stand-alone, copy-pasteable files for every code block in
-[`docs/blog-backend-ci-optimization.md`](../blog-backend-ci-optimization.md).
-Names use the same `myapp` / `appuser` placeholders as the post —
-swap for your project's names.
+[`docs/blog-backend-ci-optimization.md`](../blog-backend-ci-optimization.md). 
 
 Each folder maps to one round of the blog narrative:
 
