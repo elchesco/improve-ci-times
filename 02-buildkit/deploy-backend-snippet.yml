@@ -1,0 +1,40 @@
+# Round 2 — enable BuildKit on a runner that ships the legacy
+# docker builder.
+#
+# Three notes:
+#
+# 1. ``install: true`` is critical. It aliases ``docker build`` to
+#    ``docker buildx build`` so the existing build commands keep
+#    working. Without it you'd have to type ``docker buildx build``
+#    explicitly.
+#
+# 2. Buildx doesn't load into the local daemon by default. ``--push``
+#    sends the image straight to ECR — the separate ``docker push``
+#    step we used with the legacy builder is no longer needed.
+#
+# 3. ``--cache-to type=inline`` embeds layer cache metadata into the
+#    pushed image so the NEXT build's ``--cache-from`` pulls it back
+#    from ECR.
+
+# (snippet — paste into the build-and-deploy job steps)
+
+- name: Set up Docker Buildx
+  uses: docker/setup-buildx-action@v3
+  with:
+    install: true
+
+- name: Build y push imagen (native arm64)
+  id: build
+  env:
+    IMAGE: ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+    TAG: ${{ github.sha }}
+  run: |
+    cd backend
+    docker build \
+      --cache-from $IMAGE:latest \
+      --cache-to type=inline \
+      -t $IMAGE:sha-$TAG \
+      -t $IMAGE:latest \
+      --push \
+      .
+    echo "image=$IMAGE:sha-$TAG" >> $GITHUB_OUTPUT

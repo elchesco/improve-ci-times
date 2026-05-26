@@ -1,0 +1,52 @@
+# Starting point — the test job before any optimisation.
+#
+# 2 shards via pytest-split, serial pytest within each shard,
+# coverage instrumented inline. Standard pip install via pip-cache.
+
+test:
+  runs-on: ${{ inputs.runner || 'self-hosted' }}
+  needs: lint
+  strategy:
+    fail-fast: false
+    matrix:
+      shard: [1, 2]
+  services:
+    postgres:
+      image: postgres:15
+      env:
+        POSTGRES_DB: myapp_test
+        POSTGRES_USER: appuser
+        POSTGRES_PASSWORD: testpass
+      options: >-
+        --health-cmd pg_isready
+        --health-interval 10s
+        --health-timeout 5s
+        --health-retries 5
+      ports: ["5432"]
+  steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+
+    - run: |
+        cd backend
+        pip install \
+          --cache-dir "$RUNNER_TEMP/pip-cache-${{ matrix.shard }}" \
+          -r requirements-dev.txt
+
+    - name: Tests (shard ${{ matrix.shard }}/2)
+      env:
+        DATABASE_URL: postgresql://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+        TEST_DATABASE_URL: postgresql+asyncpg://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+        SECRET_KEY: ci-test-secret-key-32bytes-minimum-length
+        ENV: test
+        COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      run: |
+        cd backend
+        pytest tests/ \
+          --splits 2 \
+          --group ${{ matrix.shard }} \
+          --cov=app \
+          --cov-report= \
+          -v

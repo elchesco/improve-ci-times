@@ -1,0 +1,17 @@
+# Round 1 — uv in CI.
+#
+# Drop-in replacement for pip via astral-sh/setup-uv. The per-shard
+# cache-suffix mirrors the per-shard --cache-dir trick we used with
+# pip: both matrix shards land on the same self-hosted runner, and
+# without per-shard caches they race on the same tarball and one
+# shard dies with "tar exit code 2" mid-install.
+
+# (snippet — paste into the existing test job steps)
+
+- uses: astral-sh/setup-uv@v6
+  with:
+    version: "0.5.11"
+    enable-cache: true
+    cache-suffix: "shard-${{ matrix.shard }}"
+
+- run: cd backend && uv pip install --system -r requirements-dev.txt

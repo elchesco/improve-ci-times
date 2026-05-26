@@ -1,0 +1,42 @@
+# Round 5 — measurement that broke the assumption.
+#
+# One-off diagnostic step that runs only on shard 1 and reports
+# three measurements via GHA log groups:
+#
+#   A — pytest --co (no cov):       pure collection cost
+#   B — pytest --co --cov=app:      collection + coverage instrumentation
+#   C — pytest <one file> --no-cov: pytest startup baseline
+#
+# What the runner reported:
+#
+#   A — pytest collection only, no coverage    real    0m18.909s
+#   B — pytest collection only WITH coverage   real    0m23.810s
+#   C — tiny serial run, no coverage, no xdist real    0m21.481s
+#
+# A ≈ C. Collecting 1826 tests and running a single small test file
+# with no coverage take the same time. The cost isn't collection.
+# It isn't coverage (only ~5s delta). It's pytest startup + conftest
+# import — ``from app.main import app`` pulls in ~45 models, ~50
+# routers, middleware, settings. ~20s of cold-import on this runner,
+# every time, per worker.
+
+# (snippet — paste into the test job, run once)
+
+- name: Diagnose pytest startup cost
+  if: matrix.shard == 1
+  env:
+    DATABASE_URL: postgresql://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+    TEST_DATABASE_URL: postgresql+asyncpg://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+    SECRET_KEY: ci-test-secret-key-32bytes-minimum-length
+    ENV: test
+  run: |
+    cd backend
+    echo "::group::A — pytest collection only, no coverage"
+    time pytest tests/ --co -q --no-header --no-cov
+    echo "::endgroup::"
+    echo "::group::B — pytest collection only WITH coverage"
+    time pytest tests/ --co -q --no-header --cov=app --cov-report=
+    echo "::endgroup::"
+    echo "::group::C — tiny serial run, no coverage, no xdist"
+    time pytest tests/test_critical.py -q --no-header --no-cov
+    echo "::endgroup::"

@@ -1,0 +1,97 @@
+# Round 6 — final shape: 4 matrix shards, no pytest-xdist.
+#
+# If each pytest process pays a fixed 20s startup, the cheapest
+# optimisation is to pay it FEWER times. 2 shards × 4 xdist workers
+# = 10 pytest startups (2 controllers + 8 workers). 4 shards × 1
+# serial process = 4 pytest startups.
+#
+# Self-hosted runner has 4× concurrency, so all 4 shards run in
+# parallel just like the 2 shards did before.
+
+test:
+  runs-on: ${{ inputs.runner || 'self-hosted' }}
+  needs: lint
+  strategy:
+    fail-fast: false
+    matrix:
+      shard: [1, 2, 3, 4]
+  services:
+    postgres:
+      image: postgres:15
+      env:
+        POSTGRES_DB: myapp_test
+        POSTGRES_USER: appuser
+        POSTGRES_PASSWORD: testpass
+      options: >-
+        --health-cmd pg_isready
+        --health-interval 10s
+        --health-timeout 5s
+        --health-retries 5
+      ports: ["5432"]
+  steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.5.11"
+        enable-cache: true
+        cache-suffix: "shard-${{ matrix.shard }}"
+    - run: cd backend && uv pip install --system -r requirements-dev.txt
+
+    - name: Tests (shard ${{ matrix.shard }}/4)
+      env:
+        DATABASE_URL: postgresql://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+        TEST_DATABASE_URL: postgresql+asyncpg://appuser:testpass@localhost:${{ job.services.postgres.ports[5432] }}/myapp_test
+        SECRET_KEY: ci-test-secret-key-32bytes-minimum-length
+        ENV: test
+        COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      run: |
+        cd backend
+        # ``-q --no-header`` keeps output compact — dots stream as
+        # tests complete instead of buffering (which is what -v +
+        # xdist did, and what produced the ~2m "is it stuck?"
+        # window before this round).
+        pytest tests/ \
+          --splits 4 \
+          --group ${{ matrix.shard }} \
+          --cov=app \
+          --cov-report= \
+          -q \
+          --no-header
+
+    - name: Upload coverage shard
+      uses: actions/upload-artifact@v5
+      with:
+        name: coverage-${{ matrix.shard }}
+        path: backend/.coverage.${{ matrix.shard }}
+        include-hidden-files: true
+        retention-days: 1
+
+
+coverage:
+  # Combine the four shards' .coverage files and enforce the 60% gate
+  # over the union, not per shard.
+  needs: test
+  runs-on: ${{ inputs.runner || 'self-hosted' }}
+  steps:
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.11"
+    - uses: astral-sh/setup-uv@v6
+      with:
+        version: "0.5.11"
+    - run: uv pip install --system coverage==7.6.1
+    - name: Download coverage shards
+      uses: actions/download-artifact@v5
+      with:
+        pattern: coverage-*
+        path: backend/
+        merge-multiple: true
+    - name: Combine shards and enforce 60% gate
+      run: |
+        cd backend
+        coverage combine .coverage.1 .coverage.2 .coverage.3 .coverage.4
+        coverage report --fail-under=60
